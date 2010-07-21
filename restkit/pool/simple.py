@@ -89,6 +89,4 @@ class SimplePool(BasePool):
                 del self._hosts[netloc]
         finally:
             self._lock.writer_leaves()
-        
-        
 

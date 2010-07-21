@@ -170,6 +170,8 @@ class HttpConnection(object):
         # build filter lists
         self.filters = Filters(filters)
         self.ssl_args = ssl_args or {}
+        
+        self.nb_connections = 0
        
         if not pool_instance:
             self.should_close = True
@@ -209,10 +211,16 @@ class HttpConnection(object):
             self.pool.clear_host((self.host, self.port))
         
     def release_connection(self, address, socket):
+        if not self.pool or not self.keepalive:
+            sock.close(self._sock)
+        else:
+            self.pool.put(address, self._sock)
+        self.nb_connections -= 1
+        
+    def keepalive(self):
         if not self.pool:
-            sock.close(self._sock) 
-            return
-        self.pool.put(address, self._sock)
+            return False
+        return (self.nb_connections <= self.pool.keepalive) 
         
     def parse_url(self, url):
         """ parse url and get host/port"""
@@ -343,7 +351,7 @@ class HttpConnection(object):
                     value = str(value)
                 self.headers.append((name, value))
                 
-        self.headers.append(("Connection", connection))
+        
         
         self.set_body(body, content_type=content_type, 
             content_length=content_length, chunked=chunked)
@@ -352,11 +360,17 @@ class HttpConnection(object):
         self.chunked = chunked
         self.host_hdr = host
         self.accept_encoding = accept_encoding
+        self.connection = connection
         
         # Finally do the request
         return self.do_send()
         
     def _req_headers(self):
+        connection = self.connection
+        if not self.keepalive():
+            connection = "close"
+        self.headers.append(("Connection", connection))
+                
         # by default all connections are HTTP/1.1    
         if self.version == (1,1):
             httpver = "HTTP/1.1"
@@ -385,6 +399,7 @@ class HttpConnection(object):
             try:
                 # get socket
                 self._sock = self.make_connection()
+                self.nb_connections +=1
                 
                 # apply on request filters
                 self.filters.apply("on_request", self)
