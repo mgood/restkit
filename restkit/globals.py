@@ -3,6 +3,7 @@
 # This file is part of restkit released under the MIT license. 
 # See the NOTICE for more information.
 
+import atexit
 from .manager import Manager
 
 _manager = None
@@ -22,3 +23,10 @@ def get_manager():
 
 set_default_manager()
 
+
+def _stop():
+    global _manager
+    if _manager is not None:
+        _manager.stop()
+
+atexit.register(_stop)
