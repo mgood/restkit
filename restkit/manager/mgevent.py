@@ -6,49 +6,30 @@
 """
 gevent connection manager. 
 """
-import os
-import time
 
 import gevent
-from gevent.coros import Semaphore, RLock
-from gevent.event import Event
-from gevent.hub import get_hub
+from gevent.coros import RLock
 
 from .base import Manager
 
 
-class GeventConnectionReaper(object):
+class GeventConnectionReaper(gevent.Greenlet):
 
     running = False
 
     def __init__(self, manager, delay=150):
         self.manager = manager
         self.delay = delay
-        self.g = None
+        gevent.Greenlet.__init__(self)  
 
-    def start(self):
-        self.running = "false"
-        self._spawn()
-
-    def _spawn(self):
-        g = gevent.spawn_later(self.delay, self._exec)
-        g.link(self._exit)
-        self._g = g
-        gevent.sleep(0)
-
-    def _exit(self, g):
-        try:
-            g.wait()
-        except:
-            pass       
-
-    def _exec(self):
-        self.manager.murder_connections()
-        self._spawn()
-        gevent.sleep(0)
+    def _run(self):
+        self.running = True
+        while True:
+            gevent.sleep(self.delay)
+            self.manager.murder_connections()
 
     def ensure_started(self):
-        if not self.running:
+        if not self.running or self.ready():
             self.start()
 
 class GeventManager(Manager):
@@ -63,3 +44,4 @@ class GeventManager(Manager):
         else:
             self._reaper = GeventConnectionReaper(self, delay=self.timeout)
             self._reaper.ensure_started()
+

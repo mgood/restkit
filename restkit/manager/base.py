@@ -68,6 +68,7 @@ class Manager(object):
         return threading.RLock()
 
     def murder_connections(self, *args):
+        print "murder"
         self._lock.acquire()
         try:
             active_sockets = self.active_sockets.copy()
@@ -82,6 +83,7 @@ class Manager(object):
             self._lock.release()
 
     def close_connections(self):
+        
         self._lock.acquire()
         try:
             active_sockets = self.active_sockets.copy()
