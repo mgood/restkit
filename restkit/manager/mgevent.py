@@ -12,7 +12,6 @@ from gevent.coros import RLock
 
 from .base import Manager
 
-
 class GeventConnectionReaper(gevent.Greenlet):
 
     running = False
