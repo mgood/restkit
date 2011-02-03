@@ -6,16 +6,12 @@
 from __future__ import with_statement
 
 from collections import deque
-import logging
 import signal
 import socket
 import threading
 import time
 
 from ..sock import close
-
-log = logging.getLogger(__name__)
-
 
 class ConnectionReaper(threading.Thread):
     """ connection reaper thread. Open a thread that will murder iddle
@@ -68,7 +64,6 @@ class Manager(object):
         return threading.RLock()
 
     def murder_connections(self, *args):
-        print "murder"
         self._lock.acquire()
         try:
             active_sockets = self.active_sockets.copy()
@@ -83,7 +78,6 @@ class Manager(object):
             self._lock.release()
 
     def close_connections(self):
-        
         self._lock.acquire()
         try:
             active_sockets = self.active_sockets.copy()
@@ -132,7 +126,6 @@ class Manager(object):
                         break
                 self.sockets[key] = socks
                 self.connections_count[key] -= 1
-                log.debug("get connection from manager")
                 return sock
             except (IndexError, KeyError,):
                 return None
@@ -160,7 +153,6 @@ class Manager(object):
                             time.time(), key)
                 except (socket.error, AttributeError,):
                     # socket has been closed
-                    log.info("socket closed")
                     return
 
                 socks.appendleft(sock)
@@ -171,8 +163,6 @@ class Manager(object):
                 except KeyError:
                     self.connections_count[key] = 1 
 
-                log.debug("put connection in manager %s" %
-                        self.all_connections_count())
             else:
                 # close connection if we have enough connections in the
                 # pool.
