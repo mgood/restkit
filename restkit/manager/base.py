@@ -17,65 +17,52 @@ from ..sock import close
 log = logging.getLogger(__name__)
 
 
-class Scheduler(threading.Thread):
+class ConnectionReaper(threading.Thread):
+    """ connection reaper thread. Open a thread that will murder iddle
+    connections after a delay """
 
     running = False
 
-    def __init__(self, cb, timeout):
-        self.cb = cb
-        self.timeout = timeout
+    def __init__(self, manager, delay=150):
+        self.manager = manager
+        self.delay = delay
         threading.Thread.__init__(self)
-        
-        self._shutdown = threading.Event()
-        self._stopped = threading.Event()
-        
-        self.mutex = threading.Lock()
-        self.not_empty = threading.Condition(self.mutex)
         self.setDaemon(True)
-       
-    def get_lock(self):
-         return threading.Lock()
 
     def run(self):
         self.running = True
-        while not self._shutdown.isSet():
-            time.sleep(self.timeout)
-            self.cb()
-
-        try:
-            self._stopped.set()
-        except TypeError:
-            pass
-    
-    def stop(self):
-        if self.running:
-            self._shutdown.set()
-            self._stopped.wait()
-            self.join(1e10)
-            self.running = False
+        while True:
+            time.sleep(self.delay)
+            self.manager.murder_connections()
 
     def ensure_started(self):
         if not self.running and not self.isAlive():
             self.start()
 
 class Manager(object):
+    """ Connection mager, it keeps a pool of opened connections and reap
+    them after a delay if reap_connection is True. By default a thread
+    is used to reap connections, but it can be replaced with signaling
+    if needed. In this case a signal will be send to the manager after a
+    delay. Be aware that using signaling isn't thread-safe and works
+    only on UNIX or UNIX like."""
 
-    def __init__(self, max_conn=10, timeout=150):
-        """
-        If monitoring is used.
-        """
+    def __init__(self, max_conn=10, timeout=150,
+            reap_connections=True, with_signaling=False):
         self.max_conn = max_conn
         self.timeout = timeout
+        self.reap_connections = reap_connections
+        self.with_signaling = with_signaling
 
         self.sockets = dict()
         self.active_sockets = dict()
         self.connections_count = dict()
         self._lock = self.get_lock()
 
-        self._scheduler = None
+        self._reaper = None
 
-        #if timeout is not None:
-        self.start()
+        if reap_connections and timeout is not None:
+            self.start()
 
     def get_lock(self):
         return threading.RLock()
@@ -84,12 +71,13 @@ class Manager(object):
         self._lock.acquire()
         try:
             active_sockets = self.active_sockets.copy()
-            for fno, (sock, t0) in active_sockets.items():
+            for fno, (sock, t0, k) in active_sockets.items():
                 diff = time.time() - t0
                 if diff <= self.timeout:
                     continue
                 close(sock)
                 del self.active_sockets[fno]
+                self.connections_count[k] -= 1
         finally:
             self._lock.release()
 
@@ -104,14 +92,13 @@ class Manager(object):
         finally:
             self._lock.release()
 
-       
     def start(self):
-        self._scheduler = Scheduler(self.murder_connections)
-        self._scheduler.start()
-
-    def stop(self):
-        self._scheduler.stop()
-        self.close_connections() 
+        if self.with_signaling:
+            signal.signal(signal.SIGALRM, self.murder_connections)
+            signal.alarm(self.timeout)
+        else:
+            self._reaper = ConnectionReaper(self, delay=self.timeout)
+            self._reaper.ensure_started()
 
     def all_connections_count(self):
         """ return all counts per address registered. """
@@ -153,6 +140,9 @@ class Manager(object):
     def store_socket(self, sock, addr, ssl=False):
         """ store a socket in the pool to reuse it across threads """
 
+        if self._reaper is not None:
+            self._reaper.ensure_started()
+
         self._lock.acquire()
         try:
             key = (addr, ssl)
@@ -164,7 +154,8 @@ class Manager(object):
             if len(socks) < self.max_conn:
                 # add connection to the pool
                 try:
-                    self.active_sockets[sock.fileno()] = (sock, time.time())
+                    self.active_sockets[sock.fileno()] = (sock,
+                            time.time(), key)
                 except (socket.error, AttributeError,):
                     # socket has been closed
                     log.info("socket closed")
@@ -186,12 +177,3 @@ class Manager(object):
                 close(sock)
         finally:
             self._lock.release()
-
-class AsyncManager(Manager):
-
-    def start(self):
-        signal.signal(signal.SIGALRM, self.murder_connections)
-        signal.alarm(self.timeout)
-
-    def stop(self):
-        self.close_connections() 
